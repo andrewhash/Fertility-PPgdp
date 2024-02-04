@@ -1,0 +1,245 @@
+---
+title: "Data Analysis"
+author: "Andrew Hashoush"
+date: "2024-01-05"
+output: html_document
+---
+
+Data Description: The data in the file “UN.txt” contains PPgdp, the 2001 gross national product per
+person in US dollars, and Fertility, the birth rate per 1000 femals in the population in the year 2000. The
+data are for 184 localities, mostly UN member countries, but also other areas such as Hong Kong that are
+not independent countries. In this problem, we study the relationship between Fertility and PPgdp.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(ggplot2)
+library(dplyr)
+
+```
+
+## Loading the dataset
+```{r loading data}
+setwd("~/Downloads")
+un <- read_table("UN.txt")
+un
+```
+
+## Scatterplot of Fertility versus PPgdp 
+```{r}
+n=nrow(un)
+
+ggplot(un, aes(x = PPgdp, y = Fertility)) + 
+  geom_point()
+```
+The relationship between Fertility and GDP per person is clearly non-linear. The scale is changing wildly so we consider using the log-transformation. The simple linear regression would not be a good model to summarize the raw data in this graph. 
+
+
+## Transformation
+```{r}
+un$logFertility=log(un$Fertility)
+un$logPPgdp=log(un$PPgdp)
+
+ggplot(un, aes(x = logPPgdp, y = Fertility)) + 
+  geom_point() + 
+  ggtitle("Fertility vs. log-GDP per capita")
+
+ggplot(un, aes(x = PPgdp, y = logFertility)) + 
+  geom_point() + 
+  ggtitle("logFertility vs. GDP per capita")
+
+```
+This first one is nearly linear but looking close you can see a sort of bend toward the larger x-values.
+
+Now will try logging both variables to get a more linear relationship
+```{r}
+ggplot(un, aes(x = logPPgdp, y = logFertility)) + 
+  geom_point() + 
+  ggtitle("logFertility vs. log-GDP per capita")
+```
+
+## Fitting the Model
+```{r}
+y=un$logFertility
+x=un$logPPgdp
+ybar=mean(y)
+xbar=mean(x)
+SSY=sum((y-ybar)^2)
+SSX=sum((x-xbar)^2)
+SSXY=sum((x-xbar)*(y-ybar))
+betahat1=SSXY/SSX
+betahat0=ybar-betahat1*xbar
+betahat0
+betahat1
+R2=betahat1^2*SSX/SSY #=SSR/SSTO
+R2
+
+ggplot(un, aes(x = logPPgdp, y = logFertility)) + 
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  ggtitle("logFertility vs. log-GDP per capita")
+```
+## Diagnostic plots 
+```{r}
+gg1 = ggplot(un, aes(x = logPPgdp, y = logFertility)) + 
+  geom_point()
+
+model=lm(logFertility~logPPgdp, data = un)
+un$resid = model$residuals
+sm=summary(model)
+
+
+gg2 = ggplot(un) + 
+  geom_point(aes(x = logPPgdp, y = resid)) + 
+  geom_hline(aes(yintercept = 0), color = "red")
+
+
+
+
+gg3 = ggplot(un, aes(x = resid)) + 
+  geom_histogram(bins = 20, color = "black", fill = "white") + 
+  xlim(c(-1,1))
+
+gg4 = ggplot(un, aes(sample = resid))
+gg4 = gg4 + 
+  stat_qq() + 
+  stat_qq_line() + 
+  xlab("theoretical quantiles") + 
+  ylab("observed quantiles")
+
+
+
+
+library(ggpubr)
+ggarrange(gg1, gg2, gg3, gg4, nrow = 2, ncol = 2)
+
+
+```
+The residuals look homoskedastic as their widths do not change much over the domain. There is also no strong pattern in the residuals so we do not feel that the model is systematically making errors. The histogram of residuals slightly deviates from a normal distribution as the left tail is a bit heavy relative to the left center- we can gain more insight through the QQ plot. The normal QQ plot is nearly linear-- we may worry about having light tails when doing inference. With this in mind, we continue with our analysis. 
+
+
+
+##
+```{r}
+summary(model)
+t=(betahat1-0)/(sqrt(sm$sigma^2/SSX))
+pt(t, df=n-2)
+```
+The t-statistic for the slope coefficient is -15.9 with a p-value of nearly 0 so we reject at the $\alpha$-level 0.05. We have enough evidence to suspect that there is indeed a linear relationship between the transformed variables. 
+
+## 99% confidence interval on the expected Fertility for a region with PPgdp 20,000 US dollars in 2001
+```{r}
+newdata=data.frame(logPPgdp=log(20000))
+plog=predict(model,newdata,interval="confidence",level=.99)
+plog[2:3]
+exp(plog[2:3]) #99% CI
+
+#by hand
+sigmahat2=sm$sigma^2
+yhat=function(xh){
+  betahat0+betahat1*xh}
+seyhat=function(xh){
+  sqrt(sigmahat2*(1/n + (xh-xbar)^2/sum((x-xbar)^2)))}
+CI=yhat(xh=log(20000))+c(-1,1)*qt(.995,df=n-2)*seyhat(xh=log(20000))
+exp(CI) #99% CI
+```
+
+We're 99% confident that the true mean logFertility for a region with PPGDP=$20,000 in 2001 is between (0.4155, 0.6327). This corresponds to an untransformed Fertility level between (1.5152, 1.8828) children per 1000 females. 
+
+
+## 95% confidence band for the relation between the expected Fertility and PPgdp
+```{r}
+W=sqrt(2*qf(.95, df1=2, df2=n-2))
+
+yhat=function(x){
+  betahat0+betahat1*x
+}
+sigmahat2=sm$sigma^2
+
+#CI
+seyhat=function(xh){
+  sqrt(sigmahat2*(1/n + (xh-xbar)^2/sum((x-xbar)^2)))}
+
+cband=function(xvec){
+  d=length(xvec)
+  CIs=matrix(0,d,3)
+  colnames(CIs)=c("x","lower","upper")
+  for(i in 1:d){
+    CIs[i,]=c(xvec[i], yhat(x=xvec[i])+c(-1,1)*W*seyhat(xh=xvec[i]))
+  }
+  as.data.frame(CIs)
+}
+
+#make a grid over the range of x
+range=seq(from=min(x),to=max(x),length.out = 100)
+#calc conf bands at gridpoints
+bands=cband(range)
+#sanity check
+head(bands)
+
+#add bands to plot
+ggtrans = ggplot(un, aes(x = logPPgdp, y = logFertility)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", 
+              se = FALSE) + 
+  geom_line(data = bands, 
+            aes(x = x, 
+                y = lower), 
+                color = "red", 
+                linetype = "dashed") +
+  geom_line(data = bands, 
+            aes(x = x, 
+                y = upper), 
+                color = "red", 
+                linetype = "dashed")
+
+#add fitted vals
+un$fitted = model$fitted.values
+gguntrans = ggplot(un, aes(x = exp(logPPgdp), y = exp(logFertility))) +
+  geom_point() + 
+  geom_line(aes(x = exp(logPPgdp), 
+                y = exp(fitted)),
+            color = "blue") + 
+  geom_line(data = bands, 
+            aes(x = exp(x), 
+                y = exp(lower)), 
+            color = "red", 
+            linetype = "dashed") +
+  geom_line(data = bands, 
+            aes(x = exp(x), 
+                y = exp(upper)), 
+            color = "red", 
+            linetype = "dashed") + 
+  xlab("GDP per capita") + 
+  ylab("Fertility rate")
+
+ggarrange(ggtrans, gguntrans)
+```
+
+## 99% prediction interval on Fertility for a region with PPgdp 25,000 US dollars in 2018
+```{r}
+newdata=data.frame(logPPgdp=log(25000))
+plog=predict(model,newdata,interval="prediction",level=.99)
+plog[2:3]
+exp(plog[2:3])
+
+#by hand
+yhat=function(xh){
+  betahat0+betahat1*xh}
+senewyhat=function(xh){
+  sqrt(sigmahat2*(1+1/n + (xh-xbar)^2/sum((x-xbar)^2)))}
+PI=yhat(xh=log(25000))+c(-1,1)*qt(.995,df=n-2)*senewyhat(xh=log(25000))
+PI
+exp(PI)
+
+```
+We're 99% confident that a new observation of a region with PPGDP=$25,000 in 2018 would have logFertility levels between (-0.415426,  1.357720). This corresponds to an untransformed Fertility level between (0.6601, 3.8873) births per 1000 females. 
+
+
+Because our Q-Q plot showed light tails, we may be concerned with our tests having a higher level than we claim, since the normal error assumption may be underestimating the probability of observing extreme error. Thus, we would be concerned about inefficient test results. However we're not really concerned with our hypothesis testing because it's no where near borderline. 
+ 
+
+
+
+
